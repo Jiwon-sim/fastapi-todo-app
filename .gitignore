@@ -1,0 +1,12 @@
+# SQLite 데이터베이스 파일 제외
+*.db
+
+# Python 가상환경 폴더 제외 (환경에 따라 다를 수 있음)
+.venv/
+venv/
+ENV/
+
+# Pycache 및 설정 파일 제외
+__pycache__/
+.vscode/
+.idea/
