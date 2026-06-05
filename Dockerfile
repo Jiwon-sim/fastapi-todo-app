@@ -2,6 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+RUN apt-get update && \
+    apt-get remove -y perl-base && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/* 
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
