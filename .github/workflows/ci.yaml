@@ -1,0 +1,130 @@
+name: FastAPI DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-todo
+
+jobs:
+  # ── 1. SAST: Bandit ──────────────────────────────────────
+  sast:
+    name: SAST - Bandit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Run Bandit (JSON 리포트)
+        run: |
+          bandit -r . \
+            -x ./.venv,./tests \
+            -f json \
+            -o bandit-report.json \
+            --exit-zero
+
+      - name: Upload Bandit Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  # ── 2. SCA: Trivy (filesystem - 패키지 취약점) ───────────
+  sca:
+    name: SCA - Trivy Filesystem
+    runs-on: ubuntu-latest
+    needs: sast
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy - SCA 스캔 (JSON)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: trivy-sca-report.json
+          exit-code: "0"
+          severity: "CRITICAL,HIGH"
+
+      - name: Trivy - SCA SARIF (GitHub Security)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-sca.sarif
+
+      - name: Upload SCA SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-sca.sarif
+          category: sca-filesystem
+
+      - name: Upload SCA Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sca-report
+          path: trivy-sca-report.json
+
+  # ── 3. 이미지 빌드 → 이미지 스캔 → 푸시 ─────────────────
+  build-scan-push:
+    name: Build → Image Scan → Push
+    runs-on: ubuntu-latest
+    needs: sca
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Hub 로그인
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 이미지 빌드
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+      - name: Trivy - 이미지 스캔 (JSON)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: json
+          output: trivy-image-report.json
+          exit-code: "0"
+          severity: "CRITICAL,HIGH"
+
+      - name: Trivy - 이미지 SARIF (GitHub Security)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: sarif
+          output: trivy-image.sarif
+
+      - name: Upload Image SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: image-scan
+
+      - name: Upload Image Scan Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report
+          path: trivy-image-report.json
+
+      - name: 이미지 푸시
+        run: |
+          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.IMAGE_NAME }}:latest
