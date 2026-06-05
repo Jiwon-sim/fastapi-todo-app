@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  security-events: write  # SARIF 업로드에 필요
+
 env:
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-todo
 
